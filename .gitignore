@@ -72,3 +72,4 @@ conf.yaml.backup
 tmp/
 private/
 mcp_servers.json
+frontend/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
