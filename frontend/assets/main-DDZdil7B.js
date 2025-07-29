@@ -64153,6 +64153,8 @@ function VADProvider({ children: _e }) {
   const _ = reactExports.useRef(null),
     et = reactExports.useRef(0),
     [tt, rt] = useLocalStorage("micOn", DEFAULT_VAD_STATE.micOn),
+    
+    // [tt, rt] = useLocalStorage("micOn", micOnDefault),
     nt = reactExports.useRef(!0),
     [it, at] = useLocalStorage("autoStopMic", DEFAULT_VAD_STATE.autoStopMic),
     [lt, ut] = useLocalStorage("vadSettings", DEFAULT_VAD_SETTINGS),
@@ -64177,6 +64179,12 @@ function VADProvider({ children: _e }) {
     wt = reactExports.useRef(bt),
     Tt = reactExports.useRef(xt),
     Ot = reactExports.useRef(!1);
+
+    
+    console.log("micOn:", tt);
+    console.log("autoStartMicOn:", ct);
+    console.log("autoStartMicOnConvEnd:", dt);
+
   (reactExports.useEffect(() => {
     Et.current = vt;
   }, [vt]),
@@ -100432,9 +100440,55 @@ function Agent({ onSave: _e, onCancel: _ }) {
     ],
   });
 }
-function About() {
-  return jsxRuntimeExports.jsx(Box, { children: "About Settings Content" });
+
+
+
+function Characters({ onSave: _e, onCancel: _ }) {
+  const et = useBgUrl(),
+    { confName: tt, setConfName: rt } = useConfig(),
+    { wsUrl: nt, setWsUrl: it, baseUrl: at, setBaseUrl: lt } = useWebSocket(),
+    ut = useCollections(),
+    {
+      settings: ct,
+      handleSettingChange: st,
+      handleCameraToggle: ot,
+      handleCharacterPresetChange: dt,
+      showSubtitle: ht,
+      setShowSubtitle: ft,
+    } = useGeneralSettings({
+      bgUrlContext: et,
+      confName: tt,
+      setConfName: rt,
+      baseUrl: at,
+      wsUrl: nt,
+      onWsUrlChange: it,
+      onBaseUrlChange: lt,
+      onSave: _e,
+      onCancel: _,
+    });
+
+  const characterOptions = createListCollection({
+    items: [
+      { label: "Rem", value: "rem" },
+      { label: "Mao", value: "mao" },
+      { label: "Shizuku", value: "shizuku" },
+    ],
+  });
+
+  return jsxRuntimeExports.jsxs(Stack, {
+    ...settingStyles.common.container,
+    children: [
+      jsxRuntimeExports.jsx(SelectField, {
+        label: "Characters",
+        value: ct.character,
+        onChange: (mt) => st("character", mt),
+        collection: characterOptions,
+        placeholder: "Select character",
+      }),
+    ],
+  });
 }
+
 function SettingUI({ open: _e, onClose: _ }) {
   const [et, tt] = reactExports.useState([]),
     [rt, nt] = reactExports.useState([]),
@@ -100475,6 +100529,16 @@ function SettingUI({ open: _e, onClose: _ }) {
                 onCancel: ut,
               }),
             }),
+
+            jsxRuntimeExports.jsx(TabsContent, {
+              value: "characters",
+              ...settingStyles.settingUI.tabs.content,
+              children: jsxRuntimeExports.jsx(Characters, {
+                onSave: lt,
+                onCancel: ut,
+              }),
+            }),
+
             jsxRuntimeExports.jsx(TabsContent, {
               value: "live2d",
               ...settingStyles.settingUI.tabs.content,
@@ -100504,11 +100568,7 @@ function SettingUI({ open: _e, onClose: _ }) {
                 onCancel: ut,
               }),
             }),
-            jsxRuntimeExports.jsx(TabsContent, {
-              value: "about",
-              ...settingStyles.settingUI.tabs.content,
-              children: jsxRuntimeExports.jsx(About, {}),
-            }),
+            
           ],
         }),
       [lt, ut],
@@ -100558,6 +100618,11 @@ function SettingUI({ open: _e, onClose: _ }) {
                       children: "General",
                     }),
                     jsxRuntimeExports.jsx(TabsTrigger, {
+                      value: "characters",
+                      ...settingStyles.settingUI.tabs.trigger,
+                      children: "Characters",
+                    }),
+                    jsxRuntimeExports.jsx(TabsTrigger, {
                       value: "live2d",
                       ...settingStyles.settingUI.tabs.trigger,
                       children: "Live2D",
@@ -100577,11 +100642,8 @@ function SettingUI({ open: _e, onClose: _ }) {
                       ...settingStyles.settingUI.tabs.trigger,
                       children: "Agent",
                     }),
-                    jsxRuntimeExports.jsx(TabsTrigger, {
-                      value: "about",
-                      ...settingStyles.settingUI.tabs.trigger,
-                      children: "About",
-                    }),
+                    
+
                   ],
                 }),
                 ot,
