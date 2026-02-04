@@ -1,12 +1,14 @@
 from typing import Dict, List, Optional, Callable, TypedDict
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 import asyncio
 import json
+import time
 from enum import Enum
 import numpy as np
 from loguru import logger
 
 from .service_context import ServiceContext
+from .security.input_validation import validate_websocket_message
 from .chat_group import (
     ChatGroupManager,
     handle_group_operation,
@@ -110,22 +112,52 @@ class WebSocketHandler:
         Raises:
             Exception: If initialization fails
         """
-        try:
-            session_service_context = await self._init_service_context(websocket.send_text, client_uid)
+        logger.info(
+            f"[WS DEBUG] Client {client_uid} - Starting connection initialization"
+        )
+        logger.info(
+            f"[WS DEBUG] Client {client_uid} - Connection state: {websocket.client_state.name}"
+        )
 
+        try:
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Initializing service context..."
+            )
+            session_service_context = await self._init_service_context(
+                websocket.send_text, client_uid
+            )
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Service context initialized"
+            )
+
+            logger.debug(f"[WS DEBUG] Client {client_uid} - Storing client data...")
             await self._store_client_data(
                 websocket, client_uid, session_service_context
             )
+            logger.debug(f"[WS DEBUG] Client {client_uid} - Client data stored")
 
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Sending initial messages..."
+            )
             await self._send_initial_messages(
                 websocket, client_uid, session_service_context
             )
+            logger.debug(f"[WS DEBUG] Client {client_uid} - Initial messages sent")
 
-            logger.info(f"Connection established for client {client_uid}")
+            logger.info(
+                f"[WS DEBUG] Client {client_uid} - Connection established successfully"
+            )
+            logger.info(
+                f"[WS DEBUG] Client {client_uid} - Connection state after init: {websocket.client_state.name}"
+            )
 
         except Exception as e:
             logger.error(
-                f"Failed to initialize connection for client {client_uid}: {e}"
+                f"[WS DEBUG] Client {client_uid} - Failed to initialize connection: {e}",
+                exc_info=True,
+            )
+            logger.error(
+                f"[WS DEBUG] Client {client_uid} - Connection state at init error: {websocket.client_state.name}"
             )
             await self._cleanup_failed_connection(client_uid)
             raise
@@ -151,29 +183,108 @@ class WebSocketHandler:
         session_service_context: ServiceContext,
     ):
         """Send initial connection messages to the client"""
-        await websocket.send_text(
-            json.dumps({"type": "full-text", "text": "Connection established"})
+        logger.info(
+            f"[WS DEBUG] Client {client_uid} - Preparing to send initial messages"
+        )
+        logger.info(
+            f"[WS DEBUG] Client {client_uid} - Connection state before sending: {websocket.client_state.name}"
         )
 
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "set-model-and-conf",
-                    "model_info": session_service_context.live2d_model.model_info,
-                    "conf_name": session_service_context.character_config.conf_name,
-                    "conf_uid": session_service_context.character_config.conf_uid,
-                    "client_uid": client_uid,
-                }
+        try:
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Sending connection established message..."
             )
+            await websocket.send_text(
+                json.dumps({"type": "full-text", "text": "Connection established"})
+            )
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Connection established message sent"
+            )
+        except Exception as send_err:
+            logger.error(
+                f"[WS DEBUG] Client {client_uid} - Failed to send connection message: {send_err}",
+                exc_info=True,
+            )
+            raise
+
+        # Debug: Log what we're sending
+        model_info_to_send = session_service_context.live2d_model.model_info
+        logger.info(f"[DEBUG] Sending model_info to client:")
+        logger.info(f"[DEBUG] model_info type: {type(model_info_to_send)}")
+        logger.info(
+            f"[DEBUG] model_info content: {json.dumps(model_info_to_send, indent=2)}"
         )
+        if model_info_to_send:
+            logger.info(
+                f"[DEBUG] model_info.url: {model_info_to_send.get('url', 'MISSING')}"
+            )
+            logger.info(
+                f"[DEBUG] model_info.name: {model_info_to_send.get('name', 'MISSING')}"
+            )
+        else:
+            logger.error("[DEBUG] model_info is None or empty!")
+
+        message_to_send = {
+            "type": "set-model-and-conf",
+            "model_info": model_info_to_send,
+            "conf_name": session_service_context.character_config.conf_name,
+            "conf_uid": session_service_context.character_config.conf_uid,
+            "client_uid": client_uid,
+        }
+        logger.info(
+            f"[DEBUG] Full WebSocket message: {json.dumps(message_to_send, indent=2)}"
+        )
+
+        try:
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Sending set-model-and-conf message..."
+            )
+            await websocket.send_text(json.dumps(message_to_send))
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - set-model-and-conf message sent"
+            )
+        except Exception as send_err:
+            logger.error(
+                f"[WS DEBUG] Client {client_uid} - Failed to send model config: {send_err}",
+                exc_info=True,
+            )
+            raise
 
         # Send initial group status
-        await self.send_group_update(websocket, client_uid)
+        try:
+            logger.debug(f"[WS DEBUG] Client {client_uid} - Sending group update...")
+            await self.send_group_update(websocket, client_uid)
+            logger.debug(f"[WS DEBUG] Client {client_uid} - Group update sent")
+        except Exception as send_err:
+            logger.error(
+                f"[WS DEBUG] Client {client_uid} - Failed to send group update: {send_err}",
+                exc_info=True,
+            )
+            raise
 
         # Start microphone
-        await websocket.send_text(json.dumps({"type": "control", "text": "start-mic"}))
+        try:
+            logger.debug(
+                f"[WS DEBUG] Client {client_uid} - Sending start-mic control..."
+            )
+            await websocket.send_text(
+                json.dumps({"type": "control", "text": "start-mic"})
+            )
+            logger.debug(f"[WS DEBUG] Client {client_uid} - start-mic control sent")
+        except Exception as send_err:
+            logger.error(
+                f"[WS DEBUG] Client {client_uid} - Failed to send start-mic: {send_err}",
+                exc_info=True,
+            )
+            raise
 
-    async def _init_service_context(self, send_text: Callable, client_uid: str) -> ServiceContext:
+        logger.info(
+            f"[WS DEBUG] Client {client_uid} - All initial messages sent successfully"
+        )
+
+    async def _init_service_context(
+        self, send_text: Callable, client_uid: str
+    ) -> ServiceContext:
         """Initialize service context for a new session by cloning the default context"""
         session_service_context = ServiceContext()
         await session_service_context.load_cache(
@@ -207,29 +318,125 @@ class WebSocketHandler:
             websocket: The WebSocket connection
             client_uid: Unique identifier for the client
         """
+        from .security.rate_limiter import (
+            check_message_rate_limit,
+            cleanup_message_rate_limit,
+        )
+        from .security.audit_logger import audit_logger
+
+        logger.debug(f"Starting communication loop for client {client_uid[:8]}...")
+
         try:
             while True:
                 try:
-                    data = await websocket.receive_json()
+                    raw_data = await websocket.receive_json()
+
+                    # Check per-message rate limit
+                    is_allowed, rate_error = check_message_rate_limit(client_uid)
+                    if not is_allowed:
+                        logger.warning(
+                            f"Message rate limit exceeded for client {client_uid[:8]}..."
+                        )
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "message": "Message rate limit exceeded. Please slow down.",
+                                }
+                            )
+                        )
+                        continue
+
+                    # Validate and sanitize input before processing
+                    try:
+                        data = validate_websocket_message(raw_data)
+                    except HTTPException as e:
+                        msg_type = (
+                            raw_data.get("type", "unknown")
+                            if isinstance(raw_data, dict)
+                            else "unknown"
+                        )
+                        audit_logger.log_validation_failure(
+                            client_uid, msg_type, "schema_validation"
+                        )
+                        logger.warning(
+                            f"Invalid message from client {client_uid[:8]}..."
+                        )
+                        try:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "error",
+                                        "message": "Invalid message format",
+                                    }
+                                )
+                            )
+                        except Exception:
+                            pass
+                        continue
+                    except Exception:
+                        logger.warning(
+                            f"Validation error for client {client_uid[:8]}..."
+                        )
+                        try:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "error",
+                                        "message": "Invalid message format",
+                                    }
+                                )
+                            )
+                        except Exception:
+                            pass
+                        continue
+
                     message_handler.handle_message(client_uid, data)
                     await self._route_message(websocket, client_uid, data)
+
                 except WebSocketDisconnect:
                     raise
                 except json.JSONDecodeError:
-                    logger.error("Invalid JSON received")
+                    logger.warning(f"Invalid JSON from client {client_uid[:8]}...")
+                    try:
+                        await websocket.send_text(
+                            json.dumps(
+                                {"type": "error", "message": "Invalid JSON format"}
+                            )
+                        )
+                    except Exception:
+                        pass
+                    continue
+                except HTTPException:
+                    try:
+                        await websocket.send_text(
+                            json.dumps(
+                                {"type": "error", "message": "Invalid request format"}
+                            )
+                        )
+                    except Exception:
+                        pass
                     continue
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
-                    await websocket.send_text(
-                        json.dumps({"type": "error", "message": str(e)})
-                    )
+                    # Log error internally but don't expose details to client
+                    logger.error(f"Error processing message: {type(e).__name__}")
+                    try:
+                        await websocket.send_text(
+                            json.dumps(
+                                {"type": "error", "message": "Error processing message"}
+                            )
+                        )
+                    except Exception:
+                        pass
                     continue
 
         except WebSocketDisconnect:
-            logger.info(f"Client {client_uid} disconnected")
+            logger.debug(f"Client {client_uid[:8]}... disconnected")
+            cleanup_message_rate_limit(client_uid)
             raise
         except Exception as e:
-            logger.error(f"Fatal error in WebSocket communication: {e}")
+            logger.error(f"Fatal error in WebSocket communication: {type(e).__name__}")
+            cleanup_message_rate_limit(client_uid)
             raise
 
     async def _route_message(
@@ -247,6 +454,8 @@ class WebSocketHandler:
         if not msg_type:
             logger.warning("Message received without type")
             return
+
+        logger.debug(f"Routing message type '{msg_type}' for client {client_uid}")
 
         handler = self._message_handlers.get(msg_type)
         if handler:
@@ -311,6 +520,21 @@ class WebSocketHandler:
         logger.info(f"Client {client_uid} disconnected")
         message_handler.cleanup_client(client_uid)
 
+    async def _cleanup_failed_connection(self, client_uid: str) -> None:
+        """Clean up failed connection data"""
+        self.client_connections.pop(client_uid, None)
+        self.client_contexts.pop(client_uid, None)
+        self.received_data_buffers.pop(client_uid, None)
+        self.chat_group_manager.client_group_map.pop(client_uid, None)
+
+        if client_uid in self.current_conversation_tasks:
+            task = self.current_conversation_tasks[client_uid]
+            if task and not task.done():
+                task.cancel()
+            self.current_conversation_tasks.pop(client_uid, None)
+
+        message_handler.cleanup_client(client_uid)
+
     async def broadcast_to_group(
         self, group_members: list[str], message: dict, exclude_uid: str = None
     ) -> None:
@@ -324,28 +548,54 @@ class WebSocketHandler:
 
     async def send_group_update(self, websocket: WebSocket, client_uid: str):
         """Sends group information to a client"""
+        logger.debug(
+            f"[WS DEBUG] Client {client_uid} - Sending group update, connection state: {websocket.client_state.name}"
+        )
         group = self.chat_group_manager.get_client_group(client_uid)
         if group:
             current_members = self.chat_group_manager.get_group_members(client_uid)
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "group-update",
-                        "members": current_members,
-                        "is_owner": group.owner_uid == client_uid,
-                    }
+            try:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "group-update",
+                            "members": current_members,
+                            "is_owner": group.owner_uid == client_uid,
+                        }
+                    )
                 )
-            )
+                logger.debug(
+                    f"[WS DEBUG] Client {client_uid} - Group update sent (group exists)"
+                )
+            except Exception as send_err:
+                logger.error(
+                    f"[WS DEBUG] Client {client_uid} - Failed to send group update: {send_err}",
+                    exc_info=True,
+                )
+                raise
         else:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "group-update",
-                        "members": [],
-                        "is_owner": False,
-                    }
+            try:
+                logger.debug(
+                    f"[WS DEBUG] Client {client_uid} - Sending empty group update (no group)"
                 )
-            )
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "group-update",
+                            "members": [],
+                            "is_owner": False,
+                        }
+                    )
+                )
+                logger.debug(
+                    f"[WS DEBUG] Client {client_uid} - Empty group update sent"
+                )
+            except Exception as send_err:
+                logger.error(
+                    f"[WS DEBUG] Client {client_uid} - Failed to send empty group update: {send_err}",
+                    exc_info=True,
+                )
+                raise
 
     async def _handle_interrupt(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

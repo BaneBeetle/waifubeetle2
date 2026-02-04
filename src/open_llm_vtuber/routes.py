@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from uuid import uuid4
 import numpy as np
 from datetime import datetime
@@ -10,6 +11,8 @@ from loguru import logger
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
+from .security.input_validation import validate_file_upload
+from .security.rate_limiter import check_websocket_rate_limit
 
 
 def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
@@ -29,18 +32,46 @@ def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
     @router.websocket("/client-ws")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for client connections"""
-        await websocket.accept()
+        from .security.audit_logger import audit_logger
+
+        client_ip = websocket.client.host if websocket.client else "unknown"
+        client_uid = ""
+
+        try:
+            await websocket.accept()
+            logger.debug("WebSocket connection accepted")
+        except Exception as accept_err:
+            logger.error(
+                f"Failed to accept WebSocket connection: {type(accept_err).__name__}"
+            )
+            return
+
+        # Apply rate limiting after accepting connection (so we can properly close it)
+        try:
+            await check_websocket_rate_limit(websocket)
+        except WebSocketDisconnect:
+            audit_logger.log_rate_limit("", client_ip, "connection", 0)
+            return  # Connection closed due to rate limit
+        except Exception:
+            logger.error("Error during rate limit check")
+            return
+
         client_uid = str(uuid4())
+        audit_logger.log_connection(client_uid, client_ip, "connected")
+        logger.info(f"WebSocket client {client_uid[:8]}... connected")
 
         try:
             await ws_handler.handle_new_connection(websocket, client_uid)
             await ws_handler.handle_websocket_communication(websocket, client_uid)
         except WebSocketDisconnect:
+            logger.debug(f"WebSocket client {client_uid[:8]}... disconnected")
             await ws_handler.handle_disconnect(client_uid)
         except Exception as e:
-            logger.error(f"Error in WebSocket connection: {e}")
+            logger.error(f"Error in WebSocket connection: {type(e).__name__}")
             await ws_handler.handle_disconnect(client_uid)
             raise
+        finally:
+            audit_logger.log_connection(client_uid, client_ip, "disconnected")
 
     return router
 
@@ -61,6 +92,14 @@ def init_proxy_route(server_url: str) -> APIRouter:
     @router.websocket("/proxy-ws")
     async def proxy_endpoint(websocket: WebSocket):
         """WebSocket endpoint for proxy connections"""
+        await websocket.accept()
+
+        # Apply rate limiting after accepting connection
+        try:
+            await check_websocket_rate_limit(websocket)
+        except WebSocketDisconnect:
+            return  # Connection closed due to rate limit
+
         try:
             await proxy_handler.handle_client_connection(websocket)
         except Exception as e:
@@ -146,7 +185,22 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         logger.info(f"Received audio file for transcription: {file.filename}")
 
         try:
-            contents = await file.read()
+            # Validate file upload (filename, content type, size)
+            file_size = 0
+            contents = b""
+            async for chunk in file.stream():
+                file_size += len(chunk)
+                contents += chunk
+                # Check size during streaming to prevent memory exhaustion
+                if file_size > 10 * 1024 * 1024:  # 10MB limit
+                    raise ValueError("File too large. Maximum size: 10MB")
+
+            # Validate upload using schema
+            validate_file_upload(
+                filename=file.filename or "unknown",
+                content_type=file.content_type,
+                file_size=file_size,
+            )
 
             # Validate minimum file size
             if len(contents) < 44:  # Minimum WAV header size
@@ -202,19 +256,35 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
     async def tts_endpoint(websocket: WebSocket):
         """WebSocket endpoint for TTS generation"""
         await websocket.accept()
+
+        # Apply rate limiting after accepting connection
+        try:
+            await check_websocket_rate_limit(websocket)
+        except WebSocketDisconnect:
+            return  # Connection closed due to rate limit
         logger.info("TTS WebSocket connection established")
 
         try:
             while True:
                 data = await websocket.receive_json()
-                text = data.get("text")
+
+                # Validate input
+                from .security.input_validation import validate_websocket_message
+
+                validated_data = validate_websocket_message(data)
+
+                text = validated_data.get("text")
                 if not text:
                     continue
 
                 logger.info(f"Received text for TTS: {text}")
 
-                # Split text into sentences
+                # Split text into sentences (with validation)
                 sentences = [s.strip() for s in text.split(".") if s.strip()]
+                # Limit number of sentences to prevent abuse
+                if len(sentences) > 100:
+                    sentences = sentences[:100]
+                    logger.warning("Sentence count limited to 100")
 
                 try:
                     # Generate and send audio for each sentence

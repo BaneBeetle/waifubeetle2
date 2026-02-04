@@ -1,75 +1,66 @@
-# ignore the user configuration file
-conf.yaml
-
-# ignore non-default background images
-/backgrounds/*
-
-# ignore non-default live2d models
-/live2d-models/*
-!/live2d-models/mao_pro
-!/live2d-models/shizuku
-
-# ignore non-default character configs
-/characters/*
-# but all of the defaults are already tracked, so no need to un-ignore them
-
-# ignore avatars
-avatars/*
-
-# macOS system files
-.DS_Store
-
-# Python files
-__pycache__/
-*.pyc
-lab.py
-.idea
-
-# Virtual environment
-.venv
-.conda
-conda
-
-# Sensitive data
+# ===================
+# Sensitive Files
+# ===================
 .env
-api_keys.py
-src/open_llm_vtuber/llm/user_credentials.json
+*.env
+.env.*
+conf.yaml
+*.pem
+*.key
+secrets.json
+credentials.json
 
-# Database files
-memory.db
-memory.db.bk
+# ===================
+# Python
+# ===================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.eggs/
+*.egg-info/
+*.egg
 
-# Logs
+# ===================
+# IDE
+# ===================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===================
+# Debug & Logs
+# ===================
+debug.log
+*.log
 server.log
-logs/*
 
-# Cache and models
-cache/*
-src/open_llm_vtuber/tts/asset
-src/open_llm_vtuber/tts/config
-src/open_llm_vtuber/asr/models*
-!src/open_llm_vtuber/asr/models/silero_vad.onnx
-asset
-models/*
-!models/piper_voice
-models/piper_voice/*
+# ===================
+# OS Files
+# ===================
+.DS_Store
+Thumbs.db
 
+# ===================
+# Build & Cache
+# ===================
+dist/
+build/
+*.cache
+.pytest_cache/
+.ruff_cache/
 
-# Legacy and specific directories
-legacy/
+# ===================
+# Project Specific
+# ===================
 chat_history/
-knowledge_base/
-submodules/MeloTTS
-openapi_assistants.json
-openapi_memgpt.json
-
-# memory log
-mem.json
-conf.yaml.backup
-
-*.exe
-
-tmp/
-private/
-mcp_servers.json
-frontend/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
+*.wav
+*.mp3
+git_status.txt
